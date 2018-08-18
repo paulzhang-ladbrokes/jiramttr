@@ -6,23 +6,24 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/araddon/dateparse"
 )
 
-// IssueFields test
+// IssueFields is selected fields of a jira issue. We are only interested in created and updated dates.
 type IssueFields struct {
 	Created string `json:"created"`
 	Updated string `json:"updated"`
 }
 
-// Issue test
+// Issue is a jira issue (or ticket). We are only interested in id and fields.
 type Issue struct {
 	ID     string      `json:"id"`
 	Fields IssueFields `json:"fields"`
 }
 
-// JiraResponse test
+// JiraResponse is a jira response of a restful api request
 type JiraResponse struct {
 	StartAt    int32   `json:"startAt"`
 	MaxResults int32   `json:"maxResults"`
@@ -32,53 +33,91 @@ type JiraResponse struct {
 
 var responseSeconds = make(map[string]float64)
 
-// GetMTTR gets MTTR from jira tickets given an url
+var month string
+
+var startTime time.Time
+
+var endTime time.Time
+
+// SetMonth specifies a month to measure MTTR
+func SetMonth(monthStr string) error {
+	month = monthStr
+	s, err := dateparse.ParseLocal(month)
+	if err != nil {
+		return err
+	}
+
+	startTime = s
+
+	endTime = startTime.AddDate(0, 1, 0)
+
+	return nil
+}
+
+// GetMTTR gets MTTR from jira issues given an url
 func GetMTTR(url string) (float64, error) {
-	JiraResponse, err := getIssues(url)
+	issues, err := getIssues(url)
 	if err != nil {
 		return 0.0, err
 	}
 
-	return parseResponse(JiraResponse)
+	return parseResponse(issues)
 }
 
-func getIssues(url string) (*JiraResponse, error) {
+func getIssues(url string) ([]Issue, error) {
 	var jiraResponse *JiraResponse
+
+	var issues []Issue
 
 	resp, err := http.Get(url)
 	if err != nil {
-		return jiraResponse, err
+		return issues, err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return jiraResponse, err
+		return issues, err
 	}
 
 	err = json.Unmarshal(body, &jiraResponse)
 	if err != nil {
 		return nil, err
 	}
-	return jiraResponse, nil
+
+	// TODO pagination
+	return jiraResponse.Issues, nil
 }
 
-func parseResponse(jiraResponse *JiraResponse) (float64, error) {
+func parseResponse(issues []Issue) (float64, error) {
 	var totalSeconds float64
 	count := 0
-	for _, issue := range jiraResponse.Issues {
+
+	for _, issue := range issues {
+		finished, err := dateparse.ParseLocal(issue.Fields.Updated)
+		if err != nil {
+			return 0.0, err
+		}
+
+		if finished.Before(startTime) {
+			continue
+		}
+
+		if finished.After(endTime) {
+			continue
+		}
+
 		count++
-		log.Printf("jira ticket (%s) is created at %s and updated at %s.\n", issue.ID, issue.Fields.Created, issue.Fields.Updated)
 
 		created, err := dateparse.ParseLocal(issue.Fields.Created)
 		if err != nil {
 			return 0.0, err
 		}
 
-		finished, err := dateparse.ParseLocal(issue.Fields.Updated)
-		if err != nil {
-			return 0.0, err
-		}
+		log.Printf("jira ticket (%s) is created at %s and updated at %s.\n",
+			issue.ID,
+			created,
+			finished)
 
 		id := issue.ID
 		responseTime := finished.Sub(created).Seconds()

@@ -8,7 +8,7 @@ Use JIRA tickets to measure MTTR (Mean Time To Recover)
 cd mttr
 go get
 go build
-./mttr -url <jira rest api url>
+./mttr -url <jira rest api url> -month 2018-08
 ```
 
 Response will be something like
