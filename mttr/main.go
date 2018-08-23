@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 
 	"github.com/paulzhang-ladbrokes/jiramttr"
@@ -23,5 +24,5 @@ func main() {
 		log.Fatalln("Got error getting MTTR", err)
 	}
 
-	log.Printf("MTTR is %d seconds, %.1f days\n", int32(mttr), (mttr / 3600.0 / 24.0))
+	fmt.Printf("In %s: MTTR is %d seconds, %.1f days\n", *month, int32(mttr), (mttr / 3600.0 / 24.0))
 }

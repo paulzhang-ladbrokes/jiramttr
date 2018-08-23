@@ -3,8 +3,8 @@ package jiramttr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"time"
 
@@ -21,6 +21,7 @@ type IssueFields struct {
 type Issue struct {
 	ID     string      `json:"id"`
 	Fields IssueFields `json:"fields"`
+	Key    string      `json:"key"`
 }
 
 // JiraResponse is a jira response of a restful api request
@@ -42,6 +43,7 @@ var endTime time.Time
 // SetMonth specifies a month to measure MTTR
 func SetMonth(monthStr string) error {
 	month = monthStr
+
 	s, err := dateparse.ParseLocal(month)
 	if err != nil {
 		return err
@@ -56,7 +58,7 @@ func SetMonth(monthStr string) error {
 
 // GetMTTR gets MTTR from jira issues given an url
 func GetMTTR(url string) (float64, error) {
-	issues, err := getIssues(url)
+	issues, err := getIssues(url + "&maxResults=500")
 	if err != nil {
 		return 0.0, err
 	}
@@ -85,7 +87,6 @@ func getIssues(url string) ([]Issue, error) {
 		return nil, err
 	}
 
-	// TODO pagination
 	return jiraResponse.Issues, nil
 }
 
@@ -114,14 +115,22 @@ func parseResponse(issues []Issue) (float64, error) {
 			return 0.0, err
 		}
 
-		log.Printf("jira ticket (%s) is created at %s and updated at %s.\n",
-			issue.ID,
-			created,
-			finished)
-
 		id := issue.ID
 		responseTime := finished.Sub(created).Seconds()
+		responseDay := responseTime / 3600.0 / 24.0
 		responseSeconds[id] = responseTime
+
+		fmt.Printf("%s took %.1f days, (%d-%02d-%02d - %d-%02d-%02d).\n",
+			issue.Key,
+			responseDay,
+			created.Year(),
+			created.Month(),
+			created.Day(),
+			finished.Year(),
+			finished.Month(),
+			finished.Day(),
+		)
+
 		totalSeconds += responseTime
 	}
 
