@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/araddon/dateparse"
@@ -13,8 +14,9 @@ import (
 
 // IssueFields is selected fields of a jira issue. We are only interested in created and updated dates.
 type IssueFields struct {
-	Created string `json:"created"`
-	Updated string `json:"updated"`
+	Created  string   `json:"created"`
+	Finished string   `json:"resolutiondate"`
+	Labels   []string `json:"labels"`
 }
 
 // Issue is a jira issue (or ticket). We are only interested in id and fields.
@@ -32,7 +34,9 @@ type JiraResponse struct {
 	Issues     []Issue `json:"issues"`
 }
 
-var responseSeconds = make(map[string]float64)
+var responseSecondsPerTeam = make(map[string]float64)
+
+var issuesPerTeam = make(map[string]int32)
 
 var month string
 
@@ -57,10 +61,10 @@ func SetMonth(monthStr string) error {
 }
 
 // GetMTTR gets MTTR from jira issues given an url
-func GetMTTR(url string) (float64, error) {
+func GetMTTR(url string) (map[string]float64, error) {
 	issues, err := getIssues(url + "&maxResults=500")
 	if err != nil {
-		return 0.0, err
+		return responseSecondsPerTeam, err
 	}
 
 	return parseResponse(issues)
@@ -90,14 +94,27 @@ func getIssues(url string) ([]Issue, error) {
 	return jiraResponse.Issues, nil
 }
 
-func parseResponse(issues []Issue) (float64, error) {
+func getOwnersByIssue(issue Issue) []string {
+	var owners []string
+	for _, label := range issue.Fields.Labels {
+		IssueOwners := GetOwners(label)
+		if len(IssueOwners) == 0 {
+			continue
+		}
+		owners = append(owners, IssueOwners...)
+	}
+
+	return owners
+}
+
+func parseResponse(issues []Issue) (map[string]float64, error) {
 	var totalSeconds float64
 	count := 0
 
 	for _, issue := range issues {
-		finished, err := dateparse.ParseLocal(issue.Fields.Updated)
+		finished, err := dateparse.ParseLocal(issue.Fields.Finished)
 		if err != nil {
-			return 0.0, err
+			return responseSecondsPerTeam, err
 		}
 
 		if finished.Before(startTime) {
@@ -112,15 +129,33 @@ func parseResponse(issues []Issue) (float64, error) {
 
 		created, err := dateparse.ParseLocal(issue.Fields.Created)
 		if err != nil {
-			return 0.0, err
+			return responseSecondsPerTeam, err
 		}
 
-		id := issue.ID
 		responseTime := finished.Sub(created).Seconds()
 		responseDay := responseTime / 3600.0 / 24.0
-		responseSeconds[id] = responseTime
 
-		fmt.Printf("%s took %.1f days, (%d-%02d-%02d - %d-%02d-%02d).\n",
+		owners := getOwnersByIssue(issue)
+
+		if len(owners) == 0 {
+			fmt.Printf("%s [%s] does not have an owner!\n",
+				issue.Key,
+				strings.Join(issue.Fields.Labels, ","),
+			)
+			continue
+		}
+
+		for _, team := range owners {
+			_, ok := responseSecondsPerTeam[team]
+			if !ok {
+				responseSecondsPerTeam[team] = 0
+				issuesPerTeam[team] = 0
+			}
+			responseSecondsPerTeam[team] += responseTime
+			issuesPerTeam[team]++
+		}
+
+		fmt.Printf("%s took %.1f days, (%d-%02d-%02d - %d-%02d-%02d). [%s] has owners %s\n",
 			issue.Key,
 			responseDay,
 			created.Year(),
@@ -129,14 +164,28 @@ func parseResponse(issues []Issue) (float64, error) {
 			finished.Year(),
 			finished.Month(),
 			finished.Day(),
+			strings.Join(issue.Fields.Labels, ","),
+			strings.Join(owners, ","),
 		)
 
 		totalSeconds += responseTime
 	}
 
 	if count == 0 {
-		return 0.0, errors.New("No jira ticket is found")
+		return responseSecondsPerTeam, errors.New("No jira ticket is found")
 	}
 
-	return totalSeconds / float64(count), nil
+	for team, responseSeconds := range responseSecondsPerTeam {
+		issueCount, ok := issuesPerTeam[team]
+		if !ok {
+			fmt.Println("I cannot believe it!")
+			responseSecondsPerTeam[team] = 0
+			continue
+		}
+		responseSecondsPerTeam[team] = responseSeconds / float64(issueCount)
+	}
+
+	responseSecondsPerTeam["__total__"] = totalSeconds / float64(count)
+
+	return responseSecondsPerTeam, nil
 }

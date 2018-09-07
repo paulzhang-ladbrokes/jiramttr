@@ -19,10 +19,26 @@ func main() {
 		log.Fatalln("Got error setting month", err)
 	}
 
+	err = jiramttr.ReadOwners()
+	if err != nil {
+		log.Fatalln("Failed to get owners data from owners.json file", err)
+	}
+
 	mttr, err := jiramttr.GetMTTR(*url)
 	if err != nil {
 		log.Fatalln("Got error getting MTTR", err)
 	}
 
-	fmt.Printf("In %s: MTTR is %d seconds, %.1f days\n", *month, int32(mttr), (mttr / 3600.0 / 24.0))
+	for team, response := range mttr {
+		if team == "__total__" {
+			continue
+		}
+		fmt.Printf("In %s: %s's MTTR is %d seconds, %.1f days\n",
+			*month, team, int32(response), (response / 3600.0 / 24.0),
+		)
+	}
+	overallMTTR := mttr["__total__"]
+	fmt.Printf("In %s: overall MTTR is %d seconds, %.1f days\n",
+		*month, int32(overallMTTR), (overallMTTR / 3600.0 / 24.0),
+	)
 }
